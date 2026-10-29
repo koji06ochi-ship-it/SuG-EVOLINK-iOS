@@ -14,3 +14,9 @@ DerivedData/
 *backup*
 *BACKUP*
 .env*
+__pycache__/
+*.pyc
+*.key
+*.pem
+*.xcarchive/
+.venv/
