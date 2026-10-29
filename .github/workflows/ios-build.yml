@@ -49,7 +49,8 @@ jobs:
           xcodebuild -project SuGEvolink.xcodeproj -scheme SuGEvolink \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/EVOLINK.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log" || result=$?
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log" || result=$?
           find "$RUNNER_TEMP/EVOLINK.xcarchive" -maxdepth 5 -name Info.plist -print -exec plutil -p {} \;
           exit "$result"
       - name: Verify bundled runtime resources
