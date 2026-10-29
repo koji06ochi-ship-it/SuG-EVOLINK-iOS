@@ -39,7 +39,7 @@ struct EvolinkWebView: UIViewRepresentable {
         controller.add(context.coordinator, name: "sugEvolinkHealth")
         controller.add(context.coordinator, name: "sugEvolinkFiles")
         for resource in ["native-health-bridge", "native-files-bridge"] {
-        if let jsURL = Bundle.main.url(forResource: resource, withExtension: "js", subdirectory: "Resources"),
+        if let jsURL = Bundle.main.url(forResource: resource, withExtension: "js", subdirectory: "WebContent"),
            let js = try? String(contentsOf: jsURL, encoding: .utf8) {
             controller.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
@@ -57,7 +57,7 @@ struct EvolinkWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = false
         webView.isInspectable = false
         bridge.webView = webView
-        if let html = Bundle.main.url(forResource: "EVOLINK_OFFLINE", withExtension: "html", subdirectory: "Resources") {
+        if let html = Bundle.main.url(forResource: "EVOLINK_OFFLINE", withExtension: "html", subdirectory: "WebContent") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         } else {
             webView.loadHTMLString("<html lang='ja'><body style='background:#092725;color:white;font:16px sans-serif;padding:32px'><h1>EVOLINKの正本が未配置</h1><p>この候補版は配信できません。最新EVOLINK_OFFLINE.htmlを組み込んでください。</p></body></html>", baseURL: nil)
@@ -81,7 +81,7 @@ struct EvolinkWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url, url.isFileURL,
-                  let resources = Bundle.main.resourceURL?.appendingPathComponent("Resources").standardizedFileURL.path,
+                  let resources = Bundle.main.resourceURL?.appendingPathComponent("WebContent").standardizedFileURL.path,
                   url.standardizedFileURL.path.hasPrefix(resources + "/") else {
                 decisionHandler(.cancel); return
             }

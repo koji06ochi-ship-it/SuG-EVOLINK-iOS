@@ -15,7 +15,7 @@ targets:
           - Info.plist
           - SuGEvolink.entitlements
       - path: SuGEvolink/Assets.xcassets
-      - path: SuGEvolink/Resources
+      - path: SuGEvolink/WebContent
         type: folder
     settings:
       base:
