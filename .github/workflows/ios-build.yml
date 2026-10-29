@@ -1,0 +1,58 @@
+name: EVOLINK iOS build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: evolink-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    # Standard public-repository runner. No larger runner, cache or artifacts.
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Select installed Xcode 26 or later
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/select-xcode.sh
+          printf 'DEVELOPER_DIR=%s\n' "$DEVELOPER_DIR" >> "$GITHUB_ENV"
+      - name: Generate Xcode project
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Build iOS Simulator without Apple signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project SuGEvolink.xcodeproj -scheme SuGEvolink \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/EVOLINK-DerivedData" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/evolink-simulator-build.log"
+      - name: Archive iOS device build without Apple signing or upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project SuGEvolink.xcodeproj -scheme SuGEvolink \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/EVOLINK.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log"
+      - name: Verify bundled runtime resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/EVOLINK.xcarchive/Products/Applications/SuGEvolink.app"
+          cmp SuGEvolink/Resources/EVOLINK_OFFLINE.html "$app/Resources/EVOLINK_OFFLINE.html"
+          test -s "$app/Resources/native-files-bridge.js"
+          test -s "$app/Resources/native-health-bridge.js"
+          echo 'Simulator build, unsigned device archive and exact HTML resource copy succeeded.'
+          echo 'No Apple credentials, signing, upload, TestFlight or App Store submission performed.'
