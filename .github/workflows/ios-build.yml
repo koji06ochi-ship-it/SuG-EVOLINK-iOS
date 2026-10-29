@@ -38,19 +38,26 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/EVOLINK-DerivedData" \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/evolink-simulator-build.log"
+          plist="$RUNNER_TEMP/EVOLINK-DerivedData/Build/Products/Debug-iphonesimulator/SuGEvolink.app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = 'jp.sugosaka.evolink'
       - name: Archive iOS device build without Apple signing or upload
         shell: bash
         run: |
           set -euo pipefail
+          result=0
           xcodebuild -project SuGEvolink.xcodeproj -scheme SuGEvolink \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/EVOLINK.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log"
+            CODE_SIGNING_ALLOWED=NO archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log" || result=$?
+          find "$RUNNER_TEMP/EVOLINK.xcarchive" -maxdepth 5 -name Info.plist -print -exec plutil -p {} \;
+          exit "$result"
       - name: Verify bundled runtime resources
         shell: bash
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/EVOLINK.xcarchive/Products/Applications/SuGEvolink.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")" = 'jp.sugosaka.evolink'
           cmp SuGEvolink/Resources/EVOLINK_OFFLINE.html "$app/Resources/EVOLINK_OFFLINE.html"
           test -s "$app/Resources/native-files-bridge.js"
           test -s "$app/Resources/native-health-bridge.js"

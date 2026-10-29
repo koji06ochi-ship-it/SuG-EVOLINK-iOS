@@ -4,7 +4,7 @@
 <key>CFBundleDevelopmentRegion</key><string>ja</string>
 <key>CFBundleDisplayName</key><string>S.u.G EVOLINK</string>
 <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
-<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+<key>CFBundleIdentifier</key><string>jp.sugosaka.evolink</string>
 <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 <key>CFBundleName</key><string>SuGEvolink</string>
 <key>CFBundlePackageType</key><string>APPL</string>
