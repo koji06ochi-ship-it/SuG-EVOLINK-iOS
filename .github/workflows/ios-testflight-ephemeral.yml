@@ -1,0 +1,155 @@
+name: EVOLINK TestFlight - single ASC key and temporary signing
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_upload:
+        description: "I approve uploading EVOLINK to TestFlight"
+        type: boolean
+        required: true
+        default: false
+      build_number:
+        description: "Unique EVOLINK build number"
+        type: string
+        required: true
+        default: '1'
+permissions:
+  contents: read
+concurrency:
+  group: evolink-testflight-one-shot
+  cancel-in-progress: false
+jobs:
+  testflight:
+    if: ${{ github.repository == 'koji06ochi-ship-it/SuG-EVOLINK-iOS' && github.ref == 'refs/heads/main' && inputs.confirm_upload == true && github.actor == 'koji06ochi-ship-it' }}
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      APP_BUNDLE_ID: jp.sugosaka.evolink
+      ASC_API_KEY_ID: MM98J638B7
+      ASC_API_ISSUER_ID: d3a981e0-7557-4223-a67f-d026debee303
+      EVOLINK_BUILD_NUMBER: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Guard - only EVOLINK approved upload, one existing Apple API key
+        env:
+          ASC_API_KEY_P8: ${{ secrets.EVOLINK_ASC_API_KEY_P8 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ASC_API_KEY_P8" || { echo 'Missing EVOLINK_ASC_API_KEY_P8 repository secret'; exit 1; }
+          case "$EVOLINK_BUILD_NUMBER" in ''|0|*[!0-9]*) echo 'Invalid positive build number'; exit 1 ;; esac
+          test -f SuGEvolink/WebContent/EVOLINK_OFFLINE.html
+          test "$(wc -c < SuGEvolink/WebContent/EVOLINK_OFFLINE.html)" -gt 10000000
+      - name: Normalize existing Apple API key (never log key material)
+        env:
+          ASC_API_KEY_P8: ${{ secrets.EVOLINK_ASC_API_KEY_P8 }}
+        shell: bash
+        run: python3 scripts/normalize_asc_key.py
+      - name: Select proven Xcode and install signing dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/select-xcode.sh
+          python3 -m venv "$RUNNER_TEMP/evolink-python"
+          "$RUNNER_TEMP/evolink-python/bin/python" -m pip install --quiet --disable-pip-version-check pyjwt cryptography requests
+          echo "$RUNNER_TEMP/evolink-python/bin" >> "$GITHUB_PATH"
+          command -v xcodegen >/dev/null || brew install xcodegen
+      - name: Generate only temporary EVOLINK certificate and App Store profile
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evolink-signing"
+          python3 scripts/evolink_ephemeral_signing.py prepare --output-dir "$RUNNER_TEMP/evolink-signing" --state-file "$RUNNER_TEMP/evolink-signing/state.json"
+      - name: Import only this run's temporary signing identity
+        env:
+          P12_PATH: ${{ steps.signing.outputs.p12_path }}
+          P12_PASSWORD: ${{ steps.signing.outputs.p12_password }}
+          PROFILE_PATH: ${{ steps.signing.outputs.profile_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/evolink-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$P12_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security cms -D -i "$PROFILE_PATH" > "$RUNNER_TEMP/evolink-profile.plist"
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/evolink-profile.plist")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/evolink-profile.plist")
+          IDENTIFIER=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/evolink-profile.plist")
+          HEALTHKIT=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.healthkit' "$RUNNER_TEMP/evolink-profile.plist")
+          test "$IDENTIFIER" = "$TEAM_ID.jp.sugosaka.evolink"
+          test "$HEALTHKIT" = 'true'
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/evolink-profile.plist")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision"
+          echo "APPLE_TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "EVOLINK_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+      - name: Signed archive - EVOLINK only
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          xcodebuild -project SuGEvolink.xcodeproj -scheme SuGEvolink \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/EVOLINK-signed.xcarchive" \
+            PRODUCT_BUNDLE_IDENTIFIER=jp.sugosaka.evolink \
+            CURRENT_PROJECT_VERSION="$EVOLINK_BUILD_NUMBER" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            PROVISIONING_PROFILE_SPECIFIER="$EVOLINK_PROFILE_NAME" archive
+      - name: Verify signed archive, bundled HTML and HealthKit entitlement
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/EVOLINK-signed.xcarchive/Products/Applications/SuGEvolink.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'jp.sugosaka.evolink'
+          cmp SuGEvolink/WebContent/EVOLINK_OFFLINE.html "$APP/WebContent/EVOLINK_OFFLINE.html"
+          codesign --verify --deep --strict "$APP"
+          codesign -d --entitlements :- "$APP" > "$RUNNER_TEMP/evolink-entitlements.plist"
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.healthkit' "$RUNNER_TEMP/evolink-entitlements.plist" | grep -qi true
+          echo 'EVOLINK signed archive and HealthKit entitlement verified.'
+      - name: Export verified App Store IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/EVOLINK-ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plist version="1.0"><dict>
+          <key>method</key><string>app-store-connect</string>
+          <key>destination</key><string>export</string>
+          <key>signingStyle</key><string>manual</string>
+          <key>teamID</key><string>$APPLE_TEAM_ID</string>
+          <key>provisioningProfiles</key><dict><key>jp.sugosaka.evolink</key><string>$EVOLINK_PROFILE_NAME</string></dict>
+          </dict></plist>
+          EOF
+          mkdir -p "$RUNNER_TEMP/EVOLINK-ipa"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/EVOLINK-signed.xcarchive" -exportPath "$RUNNER_TEMP/EVOLINK-ipa" -exportOptionsPlist "$RUNNER_TEMP/EVOLINK-ExportOptions.plist"
+          test -n "$(find "$RUNNER_TEMP/EVOLINK-ipa" -maxdepth 1 -name '*.ipa' -print -quit)"
+      - name: Upload this explicitly approved IPA to TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          KEY_DESTINATION="$KEY" python3 -c 'import base64,os,pathlib; pathlib.Path(os.environ["KEY_DESTINATION"]).write_bytes(base64.b64decode(os.environ["ASC_API_KEY_P8_BASE64"]))'
+          chmod 600 "$KEY"
+          IPA="$(find "$RUNNER_TEMP/EVOLINK-ipa" -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA"
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$ASC_API_KEY_ID" --apiIssuer "$ASC_API_ISSUER_ID"
+          echo 'EVOLINK TestFlight binary uploaded; check App Store Connect processing status.'
+      - name: Clean up only new signing assets created by this workflow
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/evolink-signing/state.json" ]; then
+            python3 scripts/evolink_ephemeral_signing.py cleanup-state --state-file "$RUNNER_TEMP/evolink-signing/state.json" || true
+          fi
+          rm -rf "$RUNNER_TEMP/evolink-signing" "$RUNNER_TEMP/evolink-signing.keychain-db"
+          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
