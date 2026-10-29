@@ -1,7 +1,12 @@
-name: EVOLINK TestFlight - single ASC key and temporary signing
+name: EVOLINK temporary signing - IPA first, optional approved upload
 on:
   workflow_dispatch:
     inputs:
+      confirm_temporary_signing:
+        description: "I approve creating and then cleaning up ONLY this run's new EVOLINK certificate/profile"
+        type: boolean
+        required: true
+        default: false
       confirm_upload:
         description: "I approve uploading EVOLINK to TestFlight"
         type: boolean
@@ -11,7 +16,7 @@ on:
         description: "Unique EVOLINK build number"
         type: string
         required: true
-        default: '1'
+        default: '2'
 permissions:
   contents: read
 concurrency:
@@ -19,9 +24,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   testflight:
-    if: ${{ github.repository == 'koji06ochi-ship-it/SuG-EVOLINK-iOS' && github.ref == 'refs/heads/main' && inputs.confirm_upload == true && github.actor == 'koji06ochi-ship-it' }}
+    if: ${{ github.repository == 'koji06ochi-ship-it/SuG-EVOLINK-iOS' && github.ref == 'refs/heads/main' && inputs.confirm_temporary_signing == true && github.actor == 'koji06ochi-ship-it' }}
     runs-on: macos-15
     timeout-minutes: 35
+    permissions:
+      contents: write # Writer-visible unpublished IPA draft only; no Actions artifact/cache storage.
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       APP_BUNDLE_ID: jp.sugosaka.evolink
@@ -32,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Guard - only EVOLINK approved upload, one existing Apple API key
+      - name: Guard - only approved EVOLINK temporary signing, one existing Apple API key
         env:
           ASC_API_KEY_P8: ${{ secrets.EVOLINK_ASC_API_KEY_P8 }}
         shell: bash
@@ -132,7 +139,13 @@ jobs:
           mkdir -p "$RUNNER_TEMP/EVOLINK-ipa"
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/EVOLINK-signed.xcarchive" -exportPath "$RUNNER_TEMP/EVOLINK-ipa" -exportOptionsPlist "$RUNNER_TEMP/EVOLINK-ExportOptions.plist"
           test -n "$(find "$RUNNER_TEMP/EVOLINK-ipa" -maxdepth 1 -name '*.ipa' -print -quit)"
+      - name: Preserve IPA and signed archive privately pending separate Apple upload approval
+        if: ${{ !inputs.confirm_upload }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/evolink_signing.py save-draft
       - name: Upload this explicitly approved IPA to TestFlight
+        if: ${{ inputs.confirm_upload == true }}
         shell: bash
         run: |
           set -euo pipefail
