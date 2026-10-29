@@ -13,6 +13,8 @@ jobs:
     # Standard public-repository runner. No larger runner, cache or artifacts.
     runs-on: macos-15
     timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,6 +54,11 @@ jobs:
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             archive 2>&1 | tee "$RUNNER_TEMP/evolink-unsigned-archive.log" || result=$?
           find "$RUNNER_TEMP/EVOLINK.xcarchive" -maxdepth 5 -name Info.plist -print -exec plutil -p {} \;
+          if [ "$result" -ne 0 ]; then
+            app="$RUNNER_TEMP/EVOLINK.xcarchive/Products/Applications/SuGEvolink.app"
+            codesign -d --verbose=4 "$app" 2>&1 || true
+            swift -e 'import Foundation; let url=URL(fileURLWithPath:CommandLine.arguments[1]); print("Foundation bundle ID:", Bundle(url:url)?.bundleIdentifier ?? "UNREADABLE")' "$app" || true
+          fi
           exit "$result"
       - name: Verify bundled runtime resources
         shell: bash
